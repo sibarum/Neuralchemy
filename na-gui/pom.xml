@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>sibarum.neuralchemy</groupId>
+        <artifactId>na-parent</artifactId>
+        <version>1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>na-gui</artifactId>
+    <packaging>jar</packaging>
+
+    <!--
+      raygui is a single-header library: its source must be cloned into tools/raygui/ before
+      the first build:
+          git clone https://github.com/raysan5/raygui.git tools/raygui
+      We compile src/main/native/raygui_impl.c (a one-line TU that #defines RAYGUI_IMPLEMENTATION
+      and includes raygui.h) into raygui.dll, linked against the raylib.lib import library that
+      na-raylib's antrun step already produced.
+    -->
+    <properties>
+        <raygui.root>${maven.multiModuleProjectDirectory}\tools\raygui</raygui.root>
+        <raygui.src>${raygui.root}\src</raygui.src>
+        <raylib.src>${maven.multiModuleProjectDirectory}\tools\raylib\src</raylib.src>
+        <raylib.build>${maven.multiModuleProjectDirectory}\tools\raylib\build-msvc</raylib.build>
+        <raygui.build>${project.build.directory}\raygui-build</raygui.build>
+        <raygui.cmake.src>${project.basedir}\src\main\native</raygui.cmake.src>
+        <jextract.out>${project.build.directory}\generated-sources\jextract</jextract.out>
+        <native.out>${project.build.directory}\native-resources\native\win32-x86-64</native.out>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>sibarum.neuralchemy</groupId>
+            <artifactId>na-raylib</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.graalvm.sdk</groupId>
+            <artifactId>nativeimage</artifactId>
+            <version>${graalvm.version}</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <resources>
+            <resource><directory>src/main/resources</directory></resource>
+            <resource><directory>${project.build.directory}/native-resources</directory></resource>
+        </resources>
+
+        <plugins>
+            <plugin>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>build-raygui-dll</id>
+                        <phase>generate-sources</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <fail message="raygui source not found at ${raygui.src}\raygui.h. Run: git clone https://github.com/raysan5/raygui.git tools/raygui">
+                                    <condition><not><available file="${raygui.src}\raygui.h"/></not></condition>
+                                </fail>
+                                <fail message="raylib import library not found at ${raylib.build}\raylib\Release\raylib.lib. Build na-raylib first (mvn -pl na-raylib install).">
+                                    <condition><not><available file="${raylib.build}\raylib\Release\raylib.lib"/></not></condition>
+                                </fail>
+                                <mkdir dir="${raygui.build}"/>
+                                <exec executable="${cmake.exe}" failonerror="true">
+                                    <arg value="-S"/><arg value="${raygui.cmake.src}"/>
+                                    <arg value="-B"/><arg value="${raygui.build}"/>
+                                    <arg value="-G"/><arg value="Visual Studio 17 2022"/>
+                                    <arg value="-A"/><arg value="x64"/>
+                                    <arg value="-DRAYGUI_SRC=${raygui.src}"/>
+                                    <arg value="-DRAYLIB_SRC=${raylib.src}"/>
+                                    <arg value="-DRAYLIB_LIB=${raylib.build}\raylib\Release\raylib.lib"/>
+                                </exec>
+                                <exec executable="${cmake.exe}" failonerror="true">
+                                    <arg value="--build"/><arg value="${raygui.build}"/>
+                                    <arg value="--config"/><arg value="Release"/>
+                                    <arg value="--parallel"/>
+                                </exec>
+                                <mkdir dir="${native.out}"/>
+                                <copy file="${raygui.build}\Release\raygui.dll" todir="${native.out}"/>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>jextract-raygui</id>
+                        <phase>generate-sources</phase>
+                        <goals><goal>exec</goal></goals>
+                        <configuration>
+                            <executable>${jextract.exe}</executable>
+                            <arguments>
+                                <argument>--output</argument>
+                                <argument>${jextract.out}</argument>
+                                <argument>--target-package</argument>
+                                <argument>com.raygui.bindings</argument>
+                                <argument>--header-class-name</argument>
+                                <argument>Raygui</argument>
+                                <argument>-I</argument>
+                                <argument>${raylib.src}</argument>
+                                <!-- Same loaderLookup trick as na-raylib: no -l, RayguiLoader does the System.load. -->
+                                <argument>${raygui.src}\raygui.h</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <id>add-jextract-source</id>
+                        <phase>generate-sources</phase>
+                        <goals><goal>add-source</goal></goals>
+                        <configuration>
+                            <sources>
+                                <source>${jextract.out}</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.2</version>
+                <configuration>
+                    <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

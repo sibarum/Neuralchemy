@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>sibarum.neuralchemy</groupId>
+        <artifactId>na-parent</artifactId>
+        <version>1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>na-raylib</artifactId>
+    <packaging>jar</packaging>
+
+    <properties>
+        <raylib.src>${raylib.root}\src</raylib.src>
+        <raylib.build>${raylib.root}\build-msvc</raylib.build>
+        <jextract.out>${project.build.directory}\generated-sources\jextract</jextract.out>
+        <native.out>${project.build.directory}\native-resources\native\win32-x86-64</native.out>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+        <!--
+          Used only by com.raylib.svm.RaylibFeature, which native-image instantiates at build time.
+          provided scope keeps it off the runtime classpath; if the Feature class is touched on a
+          stock JVM it will NoClassDefFoundError, but nothing references it from runtime code.
+        -->
+        <dependency>
+            <groupId>org.graalvm.sdk</groupId>
+            <artifactId>nativeimage</artifactId>
+            <version>${graalvm.version}</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <resources>
+            <resource><directory>src/main/resources</directory></resource>
+            <resource><directory>${project.build.directory}/native-resources</directory></resource>
+        </resources>
+
+        <plugins>
+            <plugin>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>build-raylib-dll</id>
+                        <phase>generate-sources</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <mkdir dir="${raylib.build}"/>
+                                <exec executable="${cmake.exe}" failonerror="true">
+                                    <arg value="-S"/><arg value="${raylib.root}"/>
+                                    <arg value="-B"/><arg value="${raylib.build}"/>
+                                    <arg value="-G"/><arg value="Visual Studio 17 2022"/>
+                                    <arg value="-A"/><arg value="x64"/>
+                                    <arg value="-DBUILD_SHARED_LIBS=ON"/>
+                                    <arg value="-DBUILD_EXAMPLES=OFF"/>
+                                </exec>
+                                <exec executable="${cmake.exe}" failonerror="true">
+                                    <arg value="--build"/><arg value="${raylib.build}"/>
+                                    <arg value="--config"/><arg value="Release"/>
+                                    <arg value="--parallel"/>
+                                </exec>
+                                <mkdir dir="${native.out}"/>
+                                <copy file="${raylib.build}\raylib\Release\raylib.dll" todir="${native.out}"/>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>jextract-raylib</id>
+                        <phase>generate-sources</phase>
+                        <goals><goal>exec</goal></goals>
+                        <configuration>
+                            <executable>${jextract.exe}</executable>
+                            <arguments>
+                                <argument>--output</argument>
+                                <argument>${jextract.out}</argument>
+                                <argument>--target-package</argument>
+                                <argument>com.raylib.bindings</argument>
+                                <argument>--header-class-name</argument>
+                                <argument>Raylib</argument>
+                                <!-- Intentionally no -l: bindings use loaderLookup().or(defaultLookup()) so
+                                     symbol resolution piggybacks on whatever System.load has already pulled
+                                     into the process. RaylibLoader.load() is the single source of loading. -->
+                                <argument>${raylib.src}\raylib.h</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <id>add-jextract-source</id>
+                        <phase>generate-sources</phase>
+                        <goals><goal>add-source</goal></goals>
+                        <configuration>
+                            <sources>
+                                <source>${jextract.out}</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.5.2</version>
+                <configuration>
+                    <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!--
+          Activate with: mvn -Pnative package
+          Produces a native binary at na-raylib/target/na-raylib(.exe). Reads its config (Feature,
+          init-at-run-time, IncludeResources) from META-INF/native-image/.../native-image.properties.
+        -->
+        <profile>
+            <id>native</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                        <version>0.10.3</version>
+                        <extensions>true</extensions>
+                        <executions>
+                            <execution>
+                                <id>build-native</id>
+                                <phase>package</phase>
+                                <goals><goal>compile-no-fork</goal></goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <imageName>na-raylib</imageName>
+                            <mainClass>com.raylib.Main</mainClass>
+                            <buildArgs>
+                                <!-- Build-host JVM uses FFM via the Feature; pass through. -->
+                                <buildArg>-J--enable-native-access=ALL-UNNAMED</buildArg>
+                                <!-- Windows GUI app: no console window. /SUBSYSTEM:WINDOWS would
+                                     normally route to WinMain; we keep mainCRTStartup so the C runtime
+                                     still calls our regular main(). Note: stdout/stderr go to a black
+                                     hole under /SUBSYSTEM:WINDOWS — fine for a GUI app but worth
+                                     remembering when debugging. -->
+                                <buildArg>-H:NativeLinkerOption=/SUBSYSTEM:WINDOWS</buildArg>
+                                <buildArg>-H:NativeLinkerOption=/ENTRY:mainCRTStartup</buildArg>
+                            </buildArgs>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

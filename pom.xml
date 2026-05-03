@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>sibarum.neuralchemy</groupId>
+    <artifactId>na-parent</artifactId>
+    <version>1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <build>
+        <defaultGoal>install</defaultGoal>
+    </build>
+
+    <modules>
+        <module>na-raylib</module>
+        <module>na-gui</module>
+        <module>na-dsl</module>
+        <module>na-graph</module>
+        <module>na-project</module>
+        <module>na-lab-app</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.source>25</maven.compiler.source>
+        <maven.compiler.target>25</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <truffle.version>24.1.1</truffle.version>
+        <graalvm.version>24.1.1</graalvm.version>
+        <junit.version>5.11.3</junit.version>
+
+        <!-- Native build toolchain. Override with -D on the command line if your install paths differ. -->
+        <cmake.exe>C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe</cmake.exe>
+        <jextract.exe>${maven.multiModuleProjectDirectory}\tools\jextract-22\bin\jextract.bat</jextract.exe>
+        <raylib.root>${maven.multiModuleProjectDirectory}\tools\raylib</raylib.root>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.graalvm.truffle</groupId>
+                <artifactId>truffle-api</artifactId>
+                <version>${truffle.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.graalvm.truffle</groupId>
+                <artifactId>truffle-dsl-processor</artifactId>
+                <version>${truffle.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+</project>

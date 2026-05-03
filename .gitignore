@@ -1,0 +1,7 @@
+target/
+.idea/
+*.iml
+.claude/
+tools/raylib/
+tools/raygui/
+tools/jextract-22/
