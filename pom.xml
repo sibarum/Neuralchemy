@@ -16,10 +16,10 @@
     <modules>
         <module>na-raylib</module>
         <module>na-gui</module>
-        <module>na-dsl</module>
-        <module>na-graph</module>
-        <module>na-project</module>
-        <module>na-lab-app</module>
+        <module>na-brnn</module>
+        <module>na-binary-utils</module>
+        <module>na-neuralnetworks</module>
+        <module>na-nn-visualizer</module>
     </modules>
 
     <properties>
