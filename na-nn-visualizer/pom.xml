@@ -11,11 +11,38 @@
     </parent>
 
     <artifactId>na-nn-visualizer</artifactId>
+    <packaging>jar</packaging>
 
-    <properties>
-        <maven.compiler.source>25</maven.compiler.source>
-        <maven.compiler.target>25</maven.compiler.target>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>sibarum.neuralchemy</groupId>
+            <artifactId>na-brnn</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>sibarum.neuralchemy</groupId>
+            <artifactId>na-raylib</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
 
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <configuration>
+                    <mainClass>sibarum.neuralchemy.visualizer.BrnVisualizerMain</mainClass>
+                    <executable>java</executable>
+                    <arguments>
+                        <argument>--enable-native-access=ALL-UNNAMED</argument>
+                        <argument>-classpath</argument>
+                        <classpath/>
+                        <argument>sibarum.neuralchemy.visualizer.BrnVisualizerMain</argument>
+                    </arguments>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

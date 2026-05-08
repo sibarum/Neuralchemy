@@ -68,27 +68,32 @@ error = output XOR target
 
 ### 3.2 Backpropagation
 
-Error propagates backward layer by layer. The error mask from layer N becomes the error signal presented to layer N-1. No credit assignment is performed — the full error mask is passed back unchanged (subject to stochastic thinning described below).
+Error propagates backward layer by layer. The error mask from layer N gets mapped in reverse through the routing table.
+Each bit gets flipped according to whether the N-1 bit is opposite the N bit.
+The resulting error mask becomes the error signal presented to layer N-1.
 
-The rationale for omitting credit assignment is that any attempt to apportion blame makes assumptions about the network's computational structure before that structure has been learned. This locks the network into suboptimal configurations. Stochastic full-error propagation instead allows any layer to fix any bit, and the network self-organizes into a division of labor over many updates without top-down imposition.
+This isn't credit assignment, it's simply error translation.
 
 ### 3.3 Update Rule
 
 For each layer, given an incoming error mask:
 
 1. Stochastically select a fraction `p` of the flagged bits
-2. For each selected bit, find a new routing entry that reduces the error
+2. For each selected bit, select some other flagged bit as a partner to trade with. Don't swap the same bit twice in the same iteration.
 3. Apply the rewire
-
-The update is a routing change, not a value flip. A bit is never changed — its destination is changed. This is the key insight: the values are fixed, the wiring is learned. A rewire takes effect immediately and carries the full bit value to its new destination, unlike a weight nudge which only moves a parameter by a small delta.
 
 The flip rate `p` is the primary hyperparameter, analogous to learning rate. It controls how many routing entries are updated per step. Unlike learning rate in gradient descent, `p` has a natural interpretation: it is the fraction of wrong bits that get a new route each update.
 
 ### 3.4 Convergence
 
-Convergence is guaranteed by the law of large numbers over a sufficiently large number of stochastic updates. A layer that has plateaued will have most of its bits already correctly routed; random rewires that worsen performance get corrected on subsequent steps, so the net drift is near zero. No loss monitoring or stopping criteria are needed — the system is self-stabilizing.
+Convergence may not be steady, especially in the early cycles. The primary goal of early training is to
+build an average correlation map for future layers to refine.
+It should improve intermittently as layers are added.
+However, occasionally the network may detect an anomalous positive result; it may be worthwhile to checkpoint these,
+using them as a fallback if the error drifts too far (while also re-seeding the RNG or incrementing the dataset)
 
-This is the discrete analog of SGD noise annealing naturally as the loss flattens: not by schedule, but by the structure of the update rule.
+There are a variety of techniques that can help push convergence towards desirable numbers using simple
+algorithms: these should be investigated and documented.
 
 ---
 
@@ -199,3 +204,60 @@ The forward pass and update rule are both simple enough to implement in a few do
 ---
 
 *End of Document*
+
+## ADDENDUM:
+Proposal:
+2 Bit Parameter XOR routing with learned NOT gates
+
+```
+Input      In   In   In   In
+           |    |    |    |
+-------    |    |    |    |
+Layer 0   (#)  (#)  (#)  (#)  
+        \/   \/   \/   \/   \
+ 0-1    XOR  XOR  XOR  XOR   Static XOR gates with static upstream mappings
+          \    \    \    \
+ 0-2      [!]  [!]  [!]  [!]   Dynamic NOT gates
+           |    |    |    |
+ 0-3     >-?-<>-?-<>-?-<>-?-<  Dynamic Routing
+-------    |    |    |    |
+Layer 1   (#)  (#)  (#)  (#)  
+         /   \/   \/   \/   \
+ 1-1     ====================
+ 1-2     ====And so on...====
+ 1-3     ====================
+-------    |    |    |    |
+Output    Out  Out  Out  Out
+```
+
+Backprop:
+1. Take the actual output, compare it with expected. Flag mismatched bits.
+2. Move up to previous layer's Dynamic routing table.
+3. If there are 3 or more mismatched bits, use RNG and "flip rate" hyperparameter
+to determine if 3-way shuffle should occur. If not, skip 3a.
+3a. Using M mismatched bits, random number R [0,1) and flip rate hyperparameter F:
+If M >3 and (M*F) > R, do a 3-way flip:
+Given R[i] is the route for bit i, choose 3 flagged bits a, b, c: choose new routes A,B,C.
+A = R[b]
+B = R[c]
+C = R[a]
+R[a] = A
+R[b] = B
+R[c] = C
+And unflag the 3 bits
+4. Translate remaining flagged bits to their new positions according to the routing table
+5. For each remaining flagged bit, given random number R and flip rate F:
+if R <= F, flip the parameter on the NOT gate and unflag the bit at that position.
+6. At each XOR gate at each flagged index, there are two upstream choices.
+But these are fixed routes. The XOR gate at index i should be connected to the output
+of the previous layer at the same index i (plus on other bit). This means either
+the error flag could be traced back to the same index, or it could be traced to
+the other index i+1 (or index 0 for the last bit). So generate a random number R:
+if R > 0.5 (50% chance) bitshift right 1 bit, loop the last bit back to 0.
+
+
+
+
+
+
+
