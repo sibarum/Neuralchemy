@@ -21,6 +21,11 @@
         </dependency>
         <dependency>
             <groupId>sibarum.neuralchemy</groupId>
+            <artifactId>na-rwnn</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>sibarum.neuralchemy</groupId>
             <artifactId>na-raylib</artifactId>
             <version>${project.version}</version>
         </dependency>
@@ -33,16 +38,28 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.5.0</version>
                 <configuration>
-                    <mainClass>sibarum.neuralchemy.visualizer.BrnVisualizerMain</mainClass>
                     <executable>java</executable>
                     <arguments>
                         <argument>--enable-native-access=ALL-UNNAMED</argument>
                         <argument>-classpath</argument>
                         <classpath/>
-                        <argument>sibarum.neuralchemy.visualizer.BrnVisualizerMain</argument>
+                        <argument>${visualizer.main}</argument>
                     </arguments>
                 </configuration>
             </plugin>
         </plugins>
     </build>
+
+    <properties>
+        <visualizer.main>sibarum.neuralchemy.visualizer.BrnVisualizerMain</visualizer.main>
+    </properties>
+
+    <profiles>
+        <profile>
+            <id>rwnn</id>
+            <properties>
+                <visualizer.main>sibarum.neuralchemy.visualizer.RwVisualizerMain</visualizer.main>
+            </properties>
+        </profile>
+    </profiles>
 </project>

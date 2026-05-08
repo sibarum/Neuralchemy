@@ -38,6 +38,8 @@ public final class RwTrainer {
     private final RandomGenerator rng;
     /** Per-layer per-gate per-combo signed accumulator. Shape [L][nOut][4]. */
     private final double[][][] gateAccum;
+    /** Per-tier per-position error-probability EMA. Shape [nLayers+1][nOut]. */
+    private final double[][] tierErrAccum;
 
     public RwTrainer(RwNetwork network, double flipRate, RandomGenerator rng) {
         this.network = network;
@@ -52,6 +54,7 @@ public final class RwTrainer {
             }
         }
         this.gateAccum = new double[network.layers.length][W][4];
+        this.tierErrAccum = new double[network.layers.length + 1][W];
     }
 
     public void step(byte[] input, byte[] target) {
@@ -69,7 +72,10 @@ public final class RwTrainer {
             network.layers[L].forward(tierValues[L], tierValues[L + 1]);
         }
 
-        // Initial output-tier error probabilities (binary).
+        // Initial output-tier error probabilities (binary per-step). The accumulator
+        // is updated for visualization at the end of the step but does NOT feed back
+        // into the backprop signal — empirically the per-step binary signal converges
+        // faster than the smoothed accumulator on local-structure tasks.
         double[] errProb = new double[W];
         for (int i = 0; i < W; i++) {
             errProb[i] = ((tierValues[nLayers][i] ^ target[i]) & 1) == 1 ? 1.0 : 0.0;
@@ -78,7 +84,7 @@ public final class RwTrainer {
         double[][] errAtTier = new double[nLayers + 1][];
         errAtTier[nLayers] = errProb.clone();
 
-        // Decay all accumulators once per step.
+        // Decay gate accumulators once per step.
         for (int L = 0; L < nLayers; L++) {
             for (int j = 0; j < W; j++) {
                 for (int c = 0; c < 4; c++) {
@@ -154,18 +160,30 @@ public final class RwTrainer {
             }
         }
 
+        // Update per-tier error-probability accumulator (visualization only).
+        for (int t = 0; t <= nLayers; t++) {
+            double[] step = errAtTier[t];
+            double[] acc = tierErrAccum[t];
+            for (int i = 0; i < W; i++) {
+                acc[i] = decay * acc[i] + step[i];
+            }
+        }
+
         // Snapshot accumulators for trace.
         double[][][] accumSnap = new double[nLayers][][];
         for (int L = 0; L < nLayers; L++) {
             accumSnap[L] = new double[W][];
             for (int j = 0; j < W; j++) accumSnap[L][j] = gateAccum[L][j].clone();
         }
+        double[][] tierErrAccumSnap = new double[nLayers + 1][];
+        for (int t = 0; t <= nLayers; t++) tierErrAccumSnap[t] = tierErrAccum[t].clone();
 
         return new RwStepTrace(
                 Arrays.copyOf(input, W),
                 Arrays.copyOf(target, W),
                 tierValues,
                 errAtTier,
+                tierErrAccumSnap,
                 mutated,
                 accumSnap);
     }

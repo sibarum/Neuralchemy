@@ -8,8 +8,11 @@ package sibarum.neuralchemy.rwnn;
  * forward produced this step).
  *
  * <p>{@code errProb[t][i]} is the probabilistic error at tier {@code t}, position
- * {@code i}. Tier {@code nLayers} holds the binary 0/1 output error; lower tiers
- * hold the probabilistically-distributed error from backprop.
+ * {@code i}, this step.
+ *
+ * <p>{@code tierErrAccum[t][i]} is the post-step value of the EMA accumulator
+ * over {@code errProb} for that (tier, position): high values mean the position
+ * has been persistently in error across recent steps.
  *
  * <p>{@code mutated[L][j]} is true iff gate {@code j} of layer {@code L} had its
  * truth-table changed this step.
@@ -22,6 +25,7 @@ public record RwStepTrace(
         byte[] target,
         byte[][] tierValues,
         double[][] errProb,
+        double[][] tierErrAccum,
         boolean[][] mutated,
         double[][][] gateAccum) {
 }
