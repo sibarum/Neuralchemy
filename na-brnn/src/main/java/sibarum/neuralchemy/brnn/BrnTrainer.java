@@ -6,34 +6,30 @@ import java.util.Arrays;
 import java.util.random.RandomGenerator;
 
 /**
- * Stochastic-rewire trainer with per-(layer, bit) decaying flag accumulators and a
- * primary 2-way swap operation (monotone) plus a 3-way fallback (addendum spec).
+ * Stochastic-rewire trainer for the 3-input-XOR variant: per-layer 2-way route swap,
+ * 3-source XOR backtrace, and accumulator-gated NOT-ref redirection.
  *
  * <p>Per step, for each layer L from last to first, with mask at L's post-routing tier:
  * <ol type="a">
  *   <li>Update {@code flagAccum[L][i] = decay * flagAccum[L][i] + (mask[i] ? 1 : 0)}.</li>
  *   <li><b>2-way swap</b> (primary, monotone): if any opposite-value flagged pair
- *       exists, with prob {@code flipRate * swapBias} pick the pair with the highest
- *       accumulator sum, swap their routes, and exchange their cached output values.
- *       Each swap fixes 2 flagged bits with no effect on other bits at this layer.</li>
- *   <li><b>3-way swap</b> (fallback, when no 2-way pair exists and {@code M >= 3}):
- *       fire with prob {@code M * flipRate * swapBias}, pick top-3 by accumulator,
- *       rotate their routes.</li>
- *   <li><b>If any swap fired, reset all accumulators across all layers</b> — wait
- *       for new evidence before the next mutation.</li>
+ *       exists, with prob {@code flipRate * swapBias} pick the pair with highest
+ *       accumulator sum, swap routes, exchange cached values.</li>
+ *   <li>If a swap fired, reset every accumulator across every layer.</li>
  *   <li>Translate remaining flags through routing.</li>
- *   <li><b>NOT flip</b>: per pre-routing flag at gate {@code j}, with prob
- *       {@code flipRate * (1 - swapBias) * accum/saturation} flip the NOT and reset
- *       that output bit's count.</li>
- *   <li>Trace remaining flags through XOR (50/50 to {@code j} or {@code (j+1) mod W}).</li>
+ *   <li><b>NOT-ref redirect</b>: per pre-routing flag at gate {@code j}, with prob
+ *       {@code flipRate * (1 - swapBias) * accum/saturation}, redirect
+ *       {@code notRef[j]} to a layer-input bit holding the opposite value. If the
+ *       redirect succeeds, reset that output bit's accumulator and unflag.</li>
+ *   <li>Trace remaining flags through the gate's three inputs at 33/33/33.</li>
  * </ol>
  */
 public final class BrnTrainer {
 
     public final BrnNetwork network;
     public double flipRate;
-    public double decay    = 0.95;   // EMA decay for flagAccum and mutationRate
-    public double swapBias = 0.5;    // 0 = NOT-only, 1 = swap-only
+    public double decay    = 0.95;
+    public double swapBias = 0.5;
 
     private final RandomGenerator rng;
     private final byte[] outputScratch;
@@ -84,17 +80,21 @@ public final class BrnTrainer {
         for (int L = nLayers - 1; L >= 0; L--) {
             BrnLayer layer = network.layers[L];
             byte[] layerOut = tierValues[L + 1];
+            byte[] layerIn = tierValues[L];
 
             System.arraycopy(currentMask, 0, flagged[L], 0, W);
 
+            // Signed update: +1 if flagged (this bit was wrong), -1 if not (it was right).
+            // Equilibrium ranges over [-saturation, +saturation]; positive means "consistently
+            // wrong recently," negative means "consistently right." NOT redirect prob is
+            // accum/saturation, so negative accum naturally suppresses mutations.
             for (int i = 0; i < W; i++) {
-                flagAccum[L][i] = decay * flagAccum[L][i] + (currentMask[i] != 0 ? 1.0 : 0.0);
+                flagAccum[L][i] = decay * flagAccum[L][i] + (currentMask[i] != 0 ? 1.0 : -1.0);
             }
 
             int mutations = 0;
             boolean swapFired = false;
 
-            // 2-way swap primary: opposite-value flagged pair, prob flipRate * swapBias
             int[] pair = findBest2WayPair(currentMask, layerOut, flagAccum[L], W);
             if (pair != null && rng.nextDouble() < flipRate * swapBias) {
                 int i = pair[0], j = pair[1];
@@ -108,10 +108,7 @@ public final class BrnTrainer {
                 swapFired = true;
             }
 
-            // 3-way fallback disabled — 2-way (monotone) + NOT flip only.
-
             if (swapFired) {
-                // Reset every accumulator in every layer — wait for new evidence.
                 for (int l = 0; l < flagAccum.length; l++) {
                     Arrays.fill(flagAccum[l], 0);
                 }
@@ -128,18 +125,20 @@ public final class BrnTrainer {
                 int outBit = inverseRoute(layer, j);
                 double prob = notRate * (flagAccum[L][outBit] / saturation);
                 if (rng.nextDouble() <= prob) {
-                    layer.flipNot(j);
-                    currentMask[j] = 0;
-                    flipped[L][outBit] = 1;
-                    flagAccum[L][outBit] = 0;
-                    mutations++;
+                    boolean redirected = layer.redirectNot(j, layerIn, rng);
+                    if (redirected) {
+                        currentMask[j] = 0;
+                        flipped[L][outBit] = 1;
+                        flagAccum[L][outBit] = 0;
+                        mutations++;
+                    }
                 }
             }
 
             mutationRate[L] = decay * mutationRate[L] + mutations;
 
             if (L > 0) {
-                traceBackXor(currentMask, nextMask, W);
+                traceBackThreeSource(layer, currentMask, nextMask, W);
                 byte[] tmp2 = currentMask;
                 currentMask = nextMask;
                 nextMask = tmp2;
@@ -160,8 +159,11 @@ public final class BrnTrainer {
     }
 
     private static int[] findBest2WayPair(byte[] mask, byte[] layerOut, double[] accum, int W) {
+        // Require the pair's combined accumulator to be net positive — otherwise the bits
+        // are usually correct and the current-step flag is transient noise; a swap on
+        // them is unlikely to help across the dataset and likely to be reverted.
         int bestI = -1, bestJ = -1;
-        double bestScore = -1;
+        double bestScore = 0;
         for (int i = 0; i < W; i++) {
             if (mask[i] == 0) continue;
             for (int j = i + 1; j < W; j++) {
@@ -176,32 +178,6 @@ public final class BrnTrainer {
             }
         }
         return bestJ < 0 ? null : new int[]{bestI, bestJ};
-    }
-
-    private static int countFlagged(byte[] mask, int W) {
-        int n = 0;
-        for (int i = 0; i < W; i++) if (mask[i] != 0) n++;
-        return n;
-    }
-
-    private static int[] pickTop3ByAccum(byte[] mask, double[] accum, int W) {
-        int b1 = -1, b2 = -1, b3 = -1;
-        double v1 = -1, v2 = -1, v3 = -1;
-        for (int i = 0; i < W; i++) {
-            if (mask[i] == 0) continue;
-            double a = accum[i];
-            if (a > v1) {
-                v3 = v2; b3 = b2;
-                v2 = v1; b2 = b1;
-                v1 = a;  b1 = i;
-            } else if (a > v2) {
-                v3 = v2; b3 = b2;
-                v2 = a;  b2 = i;
-            } else if (a > v3) {
-                v3 = a;  b3 = i;
-            }
-        }
-        return b3 < 0 ? null : new int[]{b1, b2, b3};
     }
 
     private static int inverseRoute(BrnLayer layer, int gateIdx) {
@@ -220,13 +196,18 @@ public final class BrnTrainer {
         }
     }
 
-    private void traceBackXor(byte[] mask, byte[] outMask, int W) {
+    /** 33/33/33 trace through the gate's 3 inputs: positions {@code j}, {@code (j+1) mod W},
+     *  and {@code notRef[j]}. */
+    private void traceBackThreeSource(BrnLayer layer, byte[] mask, byte[] outMask, int W) {
         Arrays.fill(outMask, 0, W, (byte) 0);
         for (int j = 0; j < W; j++) {
-            if (mask[j] != 0) {
-                int dst = rng.nextDouble() > 0.5 ? (j + 1) % W : j;
-                outMask[dst] = 1;
-            }
+            if (mask[j] == 0) continue;
+            double r = rng.nextDouble();
+            int dst;
+            if (r < 1.0 / 3.0) dst = j;
+            else if (r < 2.0 / 3.0) dst = (j + 1) % W;
+            else dst = layer.notRef[j];
+            outMask[dst] = 1;
         }
     }
 }

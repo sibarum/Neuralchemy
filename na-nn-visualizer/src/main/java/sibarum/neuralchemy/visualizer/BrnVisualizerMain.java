@@ -344,7 +344,7 @@ public final class BrnVisualizerMain {
                     lastTrace.flagged()[L], lastTrace.flipped()[L],
                     new AccumCtx(lastTrace.flagAccum()[L], saturation),
                     tierY[L + 1]);
-            drawNotIndicators(c, network.layers[L], tierY[L + 1]);
+            drawNotIndicators(c, network.layers[L], lastTrace.tierValues()[L], tierY[L + 1]);
         }
 
         drawTierLabel(c, "Target", null, targetY);
@@ -381,15 +381,16 @@ public final class BrnVisualizerMain {
             Color bg;
             if (flipped != null && flipped[i] != 0) {
                 bg = FLIP_BG;
-            } else if (flagged != null && flagged[i] != 0) {
-                double t = accumCtx == null ? 1.0
-                        : Math.min(1.0, accumCtx.accum[i] / accumCtx.saturation);
-                bg = flagColor(t);
+            } else if (accumCtx != null) {
+                double t = accumCtx.accum[i] / accumCtx.saturation;
+                bg = accumColor(t);
             } else {
                 bg = NORMAL_BG;
             }
             c.fillRect(x, y, cs, cs, bg);
-            c.drawRect(x, y, cs, cs, Color.BLACK);
+            // Border: red highlight if flagged this step
+            Color border = (flagged != null && flagged[i] != 0) ? Color.RED : Color.BLACK;
+            c.drawRect(x, y, cs, cs, border);
 
             String txt = String.valueOf(values[i] & 1);
             int txtW = c.measureText(txt, fontSize);
@@ -397,22 +398,35 @@ public final class BrnVisualizerMain {
         }
     }
 
-    /** White (t=0) → saturated red (t=1). Linear in RGB. */
-    private static Color flagColor(double t) {
-        int r = 255;
-        int g = (int) Math.round(255 * (1.0 - t * 0.7));
-        int b = (int) Math.round(255 * (1.0 - t * 0.7));
-        return new Color(r, g, b, 255);
+    /** Signed accumulator → background tint.
+     *  t > 0 (consistently wrong): white → red.
+     *  t < 0 (consistently right): white → green.
+     *  t ≈ 0: white. */
+    private static Color accumColor(double t) {
+        double clamped = Math.max(-1.0, Math.min(1.0, t));
+        if (clamped > 0) {
+            int g = (int) Math.round(255 * (1.0 - clamped * 0.7));
+            return new Color(255, g, g, 255);
+        } else if (clamped < 0) {
+            int rb = (int) Math.round(255 * (1.0 - (-clamped) * 0.5));
+            return new Color(rb, 255, rb, 255);
+        } else {
+            return NORMAL_BG;
+        }
     }
 
     private void drawTierLabel(Canvas c, String label, Object unused, int y) {
         c.drawText(label, 14, y + (cellSize() - 14) / 2, 14, Color.DARKGRAY);
     }
 
-    private void drawNotIndicators(Canvas c, BrnLayer layer, int y) {
+    private void drawNotIndicators(Canvas c, BrnLayer layer, byte[] layerInput, int y) {
+        // Active NOT = the gate's notRef points at a layer-input bit currently holding 1
+        // (because the third XOR operand inverts when it is 1).
         int cs = cellSize();
         for (int i = 0; i < width; i++) {
-            if (layer.notFlags[layer.route[i]] != 0) {
+            int j = layer.route[i];
+            int refIdx = layer.notRef[j];
+            if ((layerInput[refIdx] & 1) == 1) {
                 int x = cellX(i);
                 c.fillCircle(x + cs - 8, y + 8, 5, Color.PURPLE);
             }

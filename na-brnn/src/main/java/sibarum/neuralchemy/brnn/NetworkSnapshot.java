@@ -1,18 +1,18 @@
 package sibarum.neuralchemy.brnn;
 
 /**
- * A frozen copy of a {@link BrnNetwork}'s learnable parameters (routing tables and
- * NOT flags). Use to checkpoint before a step and restore on regression.
+ * A frozen copy of a {@link BrnNetwork}'s learnable parameters: per-layer routing
+ * permutation and NOT-ref indices.
  */
-public record NetworkSnapshot(int[][] routes, byte[][] notFlags) {
+public record NetworkSnapshot(int[][] routes, int[][] notRefs) {
 
     public static NetworkSnapshot of(BrnNetwork net) {
         int n = net.layers.length;
         int[][] r = new int[n][];
-        byte[][] f = new byte[n][];
+        int[][] f = new int[n][];
         for (int i = 0; i < n; i++) {
             r[i] = net.layers[i].route.clone();
-            f[i] = net.layers[i].notFlags.clone();
+            f[i] = net.layers[i].notRef.clone();
         }
         return new NetworkSnapshot(r, f);
     }
@@ -20,7 +20,7 @@ public record NetworkSnapshot(int[][] routes, byte[][] notFlags) {
     public void restoreTo(BrnNetwork net) {
         for (int i = 0; i < net.layers.length; i++) {
             System.arraycopy(routes[i], 0, net.layers[i].route, 0, routes[i].length);
-            System.arraycopy(notFlags[i], 0, net.layers[i].notFlags, 0, notFlags[i].length);
+            System.arraycopy(notRefs[i], 0, net.layers[i].notRef, 0, notRefs[i].length);
         }
     }
 }
