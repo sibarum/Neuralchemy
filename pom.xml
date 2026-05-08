@@ -17,6 +17,7 @@
         <module>na-raylib</module>
         <module>na-gui</module>
         <module>na-brnn</module>
+        <module>na-rwnn</module>
         <module>na-binary-utils</module>
         <module>na-neuralnetworks</module>
         <module>na-nn-visualizer</module>

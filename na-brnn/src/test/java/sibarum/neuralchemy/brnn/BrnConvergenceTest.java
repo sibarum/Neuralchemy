@@ -2,6 +2,9 @@ package sibarum.neuralchemy.brnn;
 
 import org.junit.jupiter.api.Test;
 import sibarum.neuralchemy.bits.Bits;
+import sibarum.neuralchemy.nn.Dataset;
+import sibarum.neuralchemy.nn.datasets.AdderDataset;
+import sibarum.neuralchemy.nn.datasets.MultiplexerDataset;
 
 import java.util.random.RandomGenerator;
 
@@ -210,6 +213,116 @@ class BrnConvergenceTest {
 
         double finalErr = meanBitErrorRate(net, eval);
         assertTrue(finalErr >= 0.0 && finalErr <= 1.0, "bit-error rate must be in [0,1]");
+    }
+
+    @Test
+    void parityFixedSmallWithRevertSmoke() {
+        // Parallel of RWNN's parity test: same task and reversion policy. BRN's 3-input
+        // XOR architecture has receptive field 3^L, so 2 layers covers width 8.
+        final int width = 8;
+        final int nLayers = 2;
+        final int nSamples = 4;
+        final RandomGenerator rng = RandomGenerator.of("L64X128MixRandom");
+
+        BrnLayer[] layers = new BrnLayer[nLayers];
+        for (int i = 0; i < nLayers; i++) {
+            layers[i] = new BrnLayer(width, width);
+            layers[i].randomInit(rng);
+        }
+        BrnNetwork net = new BrnNetwork(layers);
+        BrnTrainer trainer = new BrnTrainer(net, 0.1, rng);
+
+        ParityDataset data = new ParityDataset(nSamples, width, rng);
+
+        double prevErr = meanBitErrorRate(net, data);
+        System.out.printf("[brnn parity fixed N=%d L=%d w/revert] initial %.3f%n",
+                nSamples, nLayers, prevErr);
+
+        byte[] in = new byte[width];
+        byte[] tgt = new byte[width];
+        int reverts = 0;
+        for (int s = 0; s < 50_000; s++) {
+            data.sample(rng.nextInt(data.size()), in, tgt);
+
+            NetworkSnapshot snap = NetworkSnapshot.of(net);
+            trainer.step(in, tgt);
+            double err = meanBitErrorRate(net, data);
+            if (err > prevErr) {
+                snap.restoreTo(net);
+                reverts++;
+            } else {
+                prevErr = err;
+            }
+
+            if ((s + 1) % 10_000 == 0) {
+                System.out.printf("[brnn parity fixed w/revert] step %d: %.3f (reverts=%d)%n",
+                        s + 1, prevErr, reverts);
+            }
+        }
+        assertTrue(prevErr >= 0 && prevErr <= 1);
+    }
+
+    @Test
+    void multiplexerSmoke() {
+        runHillClimb("brnn mux", new MultiplexerDataset(), 3, 100_000);
+    }
+
+    @Test
+    void adderSmoke() {
+        runHillClimb("brnn add", new AdderDataset(), 3, 100_000);
+    }
+
+    private static void runHillClimb(String label, Dataset data, int nLayers, int steps) {
+        int width = data.inputBits();
+        RandomGenerator rng = RandomGenerator.of("L64X128MixRandom");
+
+        BrnLayer[] layers = new BrnLayer[nLayers];
+        for (int i = 0; i < nLayers; i++) {
+            layers[i] = new BrnLayer(width, width);
+            layers[i].randomInit(rng);
+        }
+        BrnNetwork net = new BrnNetwork(layers);
+        BrnTrainer trainer = new BrnTrainer(net, 0.1, rng);
+
+        double prevErr = meanBitErrorRate(net, data);
+        System.out.printf("[%s] initial %.3f (N=%d L=%d)%n", label, prevErr, data.size(), nLayers);
+
+        byte[] in = new byte[width];
+        byte[] tgt = new byte[width];
+        int reverts = 0;
+        int reportEvery = steps / 5;
+        for (int s = 0; s < steps; s++) {
+            data.sample(rng.nextInt(data.size()), in, tgt);
+            NetworkSnapshot snap = NetworkSnapshot.of(net);
+            trainer.step(in, tgt);
+            double err = meanBitErrorRate(net, data);
+            if (err > prevErr) {
+                snap.restoreTo(net);
+                reverts++;
+            } else {
+                prevErr = err;
+            }
+            if ((s + 1) % reportEvery == 0) {
+                System.out.printf("[%s] step %d: %.3f (reverts=%d)%n",
+                        label, s + 1, prevErr, reverts);
+            }
+        }
+        assertTrue(prevErr >= 0 && prevErr <= 1);
+    }
+
+    private static double meanBitErrorRate(BrnNetwork net, Dataset ds) {
+        int width = ds.inputBits();
+        byte[] in = new byte[width];
+        byte[] tgt = new byte[width];
+        byte[] out = new byte[width];
+        long total = 0, wrong = 0;
+        for (int i = 0; i < ds.size(); i++) {
+            ds.sample(i, in, tgt);
+            net.forward(in, out);
+            for (int j = 0; j < width; j++) wrong += (out[j] ^ tgt[j]) & 1;
+            total += width;
+        }
+        return wrong / (double) total;
     }
 
     private static double meanBitErrorRate(BrnNetwork net, NeighborXorDataset ds) {
